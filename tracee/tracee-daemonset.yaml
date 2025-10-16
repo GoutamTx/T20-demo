@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tracee-sa
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tracee-cr
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tracee-crb
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tracee-cr
+subjects:
+- kind: ServiceAccount
+  name: tracee-sa
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tracee
+  namespace: kube-system
+  labels:
+    app: tracee
+spec:
+  selector:
+    matchLabels:
+      app: tracee
+  template:
+    metadata:
+      labels:
+        app: tracee
+    spec:
+      serviceAccountName: tracee-sa
+      hostPID: true
+      hostNetwork: true
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: tracee
+        image: aquasec/tracee:latest
+        command:
+          - "/tracee/tracee"
+        args:
+          - "--output=json"
+          - "--output=jsonfile:/tmp/tracee.log"
+          - "-e"
+          - "ptrace"
+          - "-e"
+          - "setns"
+          - "-e"
+          - "capset"
+          - "--containers"
+          - "enrich=true"
+          - "--containers"
+          - "sockets.containerd=/run/containerd/containerd.sock"
+          - "--containers"
+          - "sockets.docker=/var/run/docker.sock"
+          - "--containers"
+          - "cgroupfs.path=/sys/fs/cgroup"
+          - "--cache"
+          - "cache-type=mem"
+        env:
+        - name: TRACEE_KERNEL_HEADERS
+          value: "/headers"
+        - name: CONTAINERS_ENRICHMENT
+          value: "1"
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: kernel-headers
+          mountPath: /lib/modules
+          readOnly: true
+        - name: usr-src
+          mountPath: /usr/src
+          readOnly: true
+        - name: wsl-headers
+          mountPath: /headers
+          readOnly: true
+        - name: containerd-sock
+          mountPath: /run/containerd
+          readOnly: true
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+          readOnly: true
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+          readOnly: true
+        - name: tracee-logs
+          mountPath: /tmp
+      volumes:
+      - name: kernel-headers
+        hostPath:
+          path: /lib/modules
+      - name: usr-src
+        hostPath:
+          path: /usr/src
+      - name: wsl-headers
+        hostPath:
+          path: /host-headers
+      - name: containerd-sock
+        hostPath:
+          path: /run/containerd
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+      - name: cgroup
+        hostPath:
+          path: /sys/fs/cgroup
+      - name: tracee-logs
+        hostPath:
+          path: /tmp/tracee-logs
+

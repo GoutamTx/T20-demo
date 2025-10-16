@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tracee
+  namespace: kube-system
+  labels:
+    app: tracee
+spec:
+  selector:
+    matchLabels:
+      app: tracee
+  template:
+    metadata:
+      labels:
+        app: tracee
+    spec:
+      serviceAccountName: tracee-sa
+      hostPID: true
+      hostNetwork: true
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: tracee
+        image: aquasec/tracee:0.20.0
+        args:
+          - "--output=json"
+          - "--log=info"
+          - "-e"
+          - "ptrace"
+          - "-e"
+          - "setns"
+          - "-e"
+          - "capset"
+        env:
+        - name: LIBBPFGO_OSRELEASE_FILE
+          value: "/etc/os-release-host"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: TRACEE_LOG_LEVEL
+          value: "info"
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        securityContext:
+          privileged: true
+        # Force line buffering for immediate log output
+        tty: true
+        stdin: true
+        volumeMounts:
+        - name: os-release
+          mountPath: /etc/os-release-host
+          readOnly: true
+        - name: kernel-src
+          mountPath: /lib/modules
+          readOnly: true
+        - name: kernel-headers
+          mountPath: /usr/src
+          readOnly: true
+        - name: debug
+          mountPath: /sys/kernel/debug
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+      volumes:
+      - name: os-release
+        hostPath:
+          path: /etc/os-release
+      - name: kernel-src
+        hostPath:
+          path: /lib/modules
+      - name: kernel-headers
+        hostPath:
+          path: /usr/src
+      - name: debug
+        hostPath:
+          path: /sys/kernel/debug
+      - name: proc
+        hostPath:
+          path: /proc
+
