@@ -17,7 +17,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Set up a temporary Kubernetes cluster using Kind (Kubernetes in Docker)
+      # 2. Set up a temporary Kubernetes cluster using Kind
       - name: Create Kind Cluster
         uses: helm/kind-action@v1.10.0
 
@@ -30,23 +30,25 @@ jobs:
         run: kubectl apply -f tracee/
 
       # 5. Wait for all deployments to be ready before starting the test
-      #    This is crucial to prevent the test from running before the agents are active.
-      - name: Wait for Loki Pod
-        run: kubectl wait --for=condition=ready pod -l app=loki -n monitoring --timeout=180s
+      - name: Wait for Loki StatefulSet to be ready
+        run: |
+          # This waits for the StatefulSet controller to report that 1 replica is ready.
+          kubectl wait --for=jsonpath='{.status.readyReplicas}'=1 statefulset/loki -n monitoring --timeout=180s
 
-      - name: Wait for Promtail DaemonSet
-        run: kubectl wait --for=condition=ready pod -l app=promtail -n monitoring --timeout=180s
-      
-      - name: Wait for Tracee DaemonSet
-        run: kubectl wait --for=condition=ready pod -l app=tracee -n kube-system --timeout=180s
+      - name: Wait for Promtail DaemonSet to be ready
+        run: |
+          # This waits for the DaemonSet controller to report that its pods are ready.
+          kubectl wait --for=jsonpath='{.status.numberReady}'=1 daemonset/promtail -n monitoring --timeout=180s
+
+      - name: Wait for Tracee DaemonSet to be ready
+        run: |
+          # This waits for the DaemonSet controller to report that its pods are ready.
+          kubectl wait --for=jsonpath='{.status.numberReady}'=1 daemonset/tracee -n kube-system --timeout=180s
         
       # 6. Perform the ptrace exploit simulation
       - name: Perform Ptrace Attack Simulation
         run: |
           echo "🚀 Starting ptrace attack simulation..."
-          # Run a pod that installs strace and immediately uses it to count syscalls for PID 1.
-          # The '-c' flag makes strace exit automatically, which is perfect for CI.
-          # The '--rm' flag cleans up the pod after it completes.
           kubectl run attacker-ptrace --image=alpine --restart=Never --rm \
             -- /bin/sh -c "apk add --no-cache strace && strace -c -p 1"
 
@@ -54,15 +56,10 @@ jobs:
       - name: Verify Detection Logs
         run: |
           echo "⏳ Waiting for logs to propagate..."
-          sleep 15 # Give a few seconds for logs to be collected and available
+          sleep 15
 
           echo "🔍 Searching for detection event in Tracee logs..."
-          
-          # Get the name of a running Tracee pod
           TRACE_POD=$(kubectl get pods -n kube-system -l app=tracee -o jsonpath='{.items[0].metadata.name}')
-          
-          # Check the logs of the Tracee pod for the ptrace event from the strace command.
-          # The 'grep' command will fail the workflow if the string is not found.
           kubectl logs $TRACE_POD -n kube-system | grep '"eventName":"ptrace"'
           
           echo "✅ Success! Ptrace event was detected by Tracee."
